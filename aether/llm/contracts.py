@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class LLMRequest(BaseModel):
     prompt: str
-    model: str = "gpt-3.5-turbo"
+    model: str | None = None
     temperature: float = 0.7
 
 class LLMResponse(BaseModel):
