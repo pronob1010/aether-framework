@@ -8,15 +8,16 @@ class GeminiProvider:
         self.default_model = default_model
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
+        model = request.model or self.default_model
         response = await self.client.aio.models.generate_content(
-            model=request.model or self.default_model,
+            model=model,
             contents=request.prompt,
             config=types.GenerateContentConfig(temperature=request.temperature),
         )
         usage = response.usage_metadata
         return LLMResponse(
             text=response.text or "",
-            model=response.model_version or request.model,
+            model=response.model_version or model,
             input_tokens=usage.prompt_token_count if usage else 0,
             output_tokens=usage.candidates_token_count if usage else 0,
         )

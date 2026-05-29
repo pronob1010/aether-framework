@@ -7,9 +7,11 @@ registries, memory, context budgeting, reasoning strategies, and
 observability.
 """
 
+from aether.client import Aether
 from aether.llm import LLMProvider, LLMRequest, LLMResponse, ask
 
 __all__ = [
+    "Aether",
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",
