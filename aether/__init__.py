@@ -13,6 +13,7 @@ from aether.extensions.llm.registry import register_provider
 from aether.extensions.llm.cost_tracking import UsageStats, TokenUsage, ModelPricing
 from aether.registry import register, register_lazy
 from aether.tools import register_tool, list_tools, get_tool
+from aether.events import EventBus
 
 __all__ = [
     # Entry point
@@ -24,6 +25,8 @@ __all__ = [
     "UsageStats",
     "TokenUsage",
     "ModelPricing",
+    # Observability (event constants + payload dataclasses live in aether.events)
+    "EventBus",
     # Generic extension API (any subsystem: LLM, vector store, DB, ...)
     "register",
     "register_lazy",

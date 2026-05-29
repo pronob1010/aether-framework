@@ -138,6 +138,41 @@ decorators. The builder composes them in the load-bearing order:
 retry inside circuit breaker, so one retry-exhausted call counts as
 **one** breaker failure, not N.
 
+### Observability hooks
+
+Subscribe sync or async callbacks to 10 lifecycle events. Use them
+for logging, tracing, metrics, debugging — no need to thread loggers
+through your code.
+
+```python
+from aether import Aether
+from aether.events import REQUEST_COMPLETE, TOOL_ERROR
+
+client = Aether()
+
+@client.on(REQUEST_COMPLETE)
+def log_latency(event):
+    print(f"{event.request.model}: {event.duration_seconds:.2f}s")
+
+@client.on(TOOL_ERROR)
+async def alert(event):
+    await send_alert(f"Tool {event.call.name} failed: {event.error}")
+
+await client.ask("hi")
+```
+
+The 10 events:
+
+| Event | Fires when |
+|---|---|
+| `request.start` / `request.complete` / `request.error` | Around each provider.complete() call (including each tool-loop iteration) |
+| `stream.start` / `stream.chunk` / `stream.complete` / `stream.error` | Around streaming responses, one `stream.chunk` per delta |
+| `tool.start` / `tool.complete` / `tool.error` | Around each tool dispatch in the tool loop |
+
+Subscriber exceptions are caught and logged — observability never
+breaks the request path. Share an `EventBus` across multiple clients
+by passing `events=bus` to each `Aether()`.
+
 ## Architecture
 
 ```
@@ -145,6 +180,7 @@ aether/
 ├── client.py                ← Aether facade (the front door)
 ├── registry.py              ← generic plugin registry (any kind)
 ├── config.py                ← runtime config (env-driven, call-time)
+├── events.py                ← EventBus + 10 lifecycle event types
 ├── llm/                     ← user-facing LLM API
 │   ├── contracts.py         ← LLMProvider Protocol + Message, ToolCall, ...
 │   └── ask.py               ← thin convenience
@@ -289,11 +325,10 @@ fake = FakeProvider(responses=[
 
 Shipped: provider abstraction, resilience (retry + circuit breaker),
 cost tracking, streaming, multi-turn messages, tool calling, reference
-tools, env-driven config.
+tools, env-driven config, observability hooks (Observer pattern).
 
 On deck (not yet built):
 - Caching decorator
-- Observability hooks (Observer pattern — lifecycle callbacks)
 - Streaming + tool calls together (the punted piece)
 - Anthropic provider
 - `pyproject.toml` and PyPI release

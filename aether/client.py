@@ -1,4 +1,5 @@
 import os
+import time
 from typing import AsyncIterator
 from aether.llm.contracts import (
     LLMProvider,
@@ -19,6 +20,16 @@ from aether.registry import REGISTRY, list_kind
 from aether.extensions.llm.registry import LLM_PROVIDER_KIND
 from aether.tools.registry import dispatch_tool
 from aether.config import get_default_temperature, get_max_tool_iterations
+from aether.events import (
+    EventBus,
+    Handler,
+    REQUEST_START, REQUEST_COMPLETE, REQUEST_ERROR,
+    STREAM_START, STREAM_CHUNK, STREAM_COMPLETE, STREAM_ERROR,
+    TOOL_START, TOOL_COMPLETE, TOOL_ERROR,
+    RequestStartEvent, RequestCompleteEvent, RequestErrorEvent,
+    StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent,
+    ToolStartEvent, ToolCompleteEvent, ToolErrorEvent,
+)
 
 
 def _config_from_env(
@@ -89,9 +100,14 @@ class Aether:
         with_retry: bool = True,
         with_circuit_breaker: bool = True,
         with_cost_tracking: bool = True,
+        events: EventBus | None = None,
     ):
         if provider is not None and config is not None:
             raise ValueError("Pass either `provider` or `config`, not both.")
+
+        # Share an EventBus across clients by passing the same instance.
+        # Default: each client gets its own.
+        self.events = events or EventBus()
 
         if provider is not None:
             self._provider = provider
@@ -104,6 +120,65 @@ class Aether:
                 with_cost_tracking=with_cost_tracking,
             )
         self._provider = build_provider(config)
+
+    # --- Observability shortcuts -----------------------------------------
+
+    def on(self, event: str, handler: Handler | None = None):
+        """Subscribe a handler (sync or async) to a lifecycle event.
+
+        Two forms:
+
+            client.on("request.complete", my_handler)        # direct call
+            @client.on("request.complete")                   # decorator
+            def my_handler(event): ...
+        """
+        return self.events.on(event, handler)
+
+    def off(self, event: str, handler: Handler) -> None:
+        """Unsubscribe a handler from an event. No-op if it wasn't registered."""
+        self.events.off(event, handler)
+
+    # --- Internal emit helpers ------------------------------------------
+
+    async def _complete_with_events(self, request: LLMRequest) -> LLMResponse:
+        """Wrap one provider.complete() call in request.start/complete/error events."""
+        await self.events.emit(REQUEST_START, RequestStartEvent(request=request))
+        start = time.perf_counter()
+        try:
+            response = await self._provider.complete(request)
+        except BaseException as e:
+            duration = time.perf_counter() - start
+            await self.events.emit(REQUEST_ERROR, RequestErrorEvent(
+                request=request, error=e, duration_seconds=duration,
+            ))
+            raise
+        duration = time.perf_counter() - start
+        await self.events.emit(REQUEST_COMPLETE, RequestCompleteEvent(
+            request=request, response=response, duration_seconds=duration,
+        ))
+        return response
+
+    async def _dispatch_with_events(self, tc) -> str:
+        """Wrap one tool dispatch in tool.start/complete/error events.
+
+        Returns a *content* string suitable for a tool message. Errors are
+        converted to content (so the LLM can recover) — they don't propagate.
+        """
+        await self.events.emit(TOOL_START, ToolStartEvent(call=tc))
+        start = time.perf_counter()
+        try:
+            result = await dispatch_tool(tc.name, tc.arguments)
+        except Exception as e:
+            duration = time.perf_counter() - start
+            await self.events.emit(TOOL_ERROR, ToolErrorEvent(
+                call=tc, error=e, duration_seconds=duration,
+            ))
+            return f"Error executing {tc.name}: {e}"
+        duration = time.perf_counter() - start
+        await self.events.emit(TOOL_COMPLETE, ToolCompleteEvent(
+            call=tc, result=result, duration_seconds=duration,
+        ))
+        return str(result)
 
     @property
     def usage(self) -> UsageStats:
@@ -160,7 +235,7 @@ class Aether:
 
         # Fast path: no tools → single round-trip.
         if not tools:
-            return await self._provider.complete(LLMRequest(
+            return await self._complete_with_events(LLMRequest(
                 messages=messages,
                 model=model,
                 temperature=temperature,
@@ -172,7 +247,7 @@ class Aether:
         # tool calls, or when the iteration cap is hit.
         response: LLMResponse | None = None
         for _ in range(max_tool_iterations + 1):
-            response = await self._provider.complete(LLMRequest(
+            response = await self._complete_with_events(LLMRequest(
                 messages=messages,
                 model=model,
                 temperature=temperature,
@@ -187,11 +262,7 @@ class Aether:
                 tool_calls=response.tool_calls,
             ))
             for tc in response.tool_calls:
-                try:
-                    result = await dispatch_tool(tc.name, tc.arguments)
-                    content = str(result)
-                except Exception as e:
-                    content = f"Error executing {tc.name}: {e}"
+                content = await self._dispatch_with_events(tc)
                 messages.append(Message(
                     role="tool",
                     content=content,
@@ -225,7 +296,13 @@ class Aether:
         model: str | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[LLMStreamChunk]:
-        """Stream of rich chunks — delta text + metadata."""
+        """Stream of rich chunks — delta text + metadata.
+
+        Fires `stream.start` once, `stream.chunk` per chunk yielded,
+        and `stream.complete` when the stream ends normally. If the
+        underlying provider errors mid-stream, `stream.error` fires
+        and the exception propagates.
+        """
         if temperature is None:
             temperature = get_default_temperature()
         request = LLMRequest(
@@ -233,8 +310,27 @@ class Aether:
             model=model,
             temperature=temperature,
         )
-        async for chunk in self._provider.stream(request):
-            yield chunk
+        await self.events.emit(STREAM_START, StreamStartEvent(request=request))
+        start = time.perf_counter()
+        chunk_count = 0
+        try:
+            async for chunk in self._provider.stream(request):
+                chunk_count += 1
+                await self.events.emit(STREAM_CHUNK, StreamChunkEvent(
+                    request=request, chunk=chunk,
+                ))
+                yield chunk
+        except BaseException as e:
+            duration = time.perf_counter() - start
+            await self.events.emit(STREAM_ERROR, StreamErrorEvent(
+                request=request, error=e,
+                duration_seconds=duration, chunk_count=chunk_count,
+            ))
+            raise
+        duration = time.perf_counter() - start
+        await self.events.emit(STREAM_COMPLETE, StreamCompleteEvent(
+            request=request, duration_seconds=duration, chunk_count=chunk_count,
+        ))
 
     async def stream_text(
         self,
