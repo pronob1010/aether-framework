@@ -13,7 +13,7 @@ async def test_ask_passes_question_to_provider():
     provider = FakeProvider()
     await ask("What is the meaning of life?", provider)
     assert len(provider.calls) == 1
-    assert provider.calls[0].prompt == "What is the meaning of life?"
+    assert provider.calls[0].messages[0].content == "What is the meaning of life?"
 
 @pytest.mark.asyncio
 async def test_ask_leaves_model_unset_by_default():

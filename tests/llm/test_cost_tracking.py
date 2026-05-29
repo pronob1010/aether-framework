@@ -1,7 +1,7 @@
 import pytest
 from typing import AsyncIterator
 from aether import Aether, UsageStats
-from aether.llm.contracts import LLMRequest, LLMResponse, LLMStreamChunk
+from aether.llm.contracts import LLMRequest, LLMResponse, LLMStreamChunk, Message
 from aether.extensions.llm.fake import FakeProvider
 from aether.extensions.llm.cost_tracking import (
     CostTrackingProvider,
@@ -23,7 +23,7 @@ from aether.extensions.llm.builder import (
 @pytest.mark.asyncio
 async def test_complete_records_tokens_per_model():
     tracker = CostTrackingProvider(FakeProvider(canned_response="one two three"))
-    await tracker.complete(LLMRequest(prompt="hi there"))
+    await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi there")]))
     assert tracker.stats.total_requests == 1
     assert tracker.stats.total_input_tokens == 2     # "hi there"
     assert tracker.stats.total_output_tokens == 3    # "one two three"
@@ -34,7 +34,7 @@ async def test_complete_records_tokens_per_model():
 async def test_complete_accumulates_across_calls():
     tracker = CostTrackingProvider(FakeProvider(canned_response="ok"))
     for _ in range(5):
-        await tracker.complete(LLMRequest(prompt="hi"))
+        await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     assert tracker.stats.total_requests == 5
     assert tracker.stats.by_model["fake-model"].requests == 5
 
@@ -56,7 +56,7 @@ class TwoModelProvider:
 async def test_per_model_breakdown_is_correct():
     tracker = CostTrackingProvider(TwoModelProvider())
     for _ in range(4):
-        await tracker.complete(LLMRequest(prompt="hi"))
+        await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     assert tracker.stats.by_model["gpt-4o"].requests == 2
     assert tracker.stats.by_model["gpt-4o-mini"].requests == 2
     assert tracker.stats.by_model["gpt-4o"].input_tokens == 20
@@ -67,7 +67,7 @@ async def test_per_model_breakdown_is_correct():
 @pytest.mark.asyncio
 async def test_stream_records_only_final_chunk_token_counts():
     tracker = CostTrackingProvider(FakeProvider(canned_response="alpha beta gamma"))
-    async for _ in tracker.stream(LLMRequest(prompt="hi")):
+    async for _ in tracker.stream(LLMRequest(messages=[Message(role="user", content="hi")])):
         pass
     # FakeProvider only emits tokens on the final chunk (3 words)
     assert tracker.stats.total_output_tokens == 3
@@ -87,7 +87,7 @@ async def test_aborted_stream_records_nothing():
     """If a stream errors before the final chunk's usage data, don't count it."""
     tracker = CostTrackingProvider(AbortMidStreamProvider())
     with pytest.raises(RuntimeError):
-        async for _ in tracker.stream(LLMRequest(prompt="hi")):
+        async for _ in tracker.stream(LLMRequest(messages=[Message(role="user", content="hi")])):
             pass
     assert tracker.stats.total_requests == 0
 
@@ -97,14 +97,14 @@ async def test_aborted_stream_records_nothing():
 @pytest.mark.asyncio
 async def test_total_cost_is_none_without_pricing():
     tracker = CostTrackingProvider(FakeProvider())
-    await tracker.complete(LLMRequest(prompt="hi"))
+    await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     assert tracker.stats.total_cost_usd is None
 
 
 @pytest.mark.asyncio
 async def test_total_cost_uses_default_pricing():
     tracker = CostTrackingProvider(FakeProvider(canned_response="x"), pricing=DEFAULT_PRICING)
-    await tracker.complete(LLMRequest(prompt="hi"))
+    await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     # fake-model is priced at $0 → total = 0
     assert tracker.stats.total_cost_usd == 0.0
 
@@ -117,7 +117,7 @@ async def test_total_cost_uses_custom_pricing():
         pricing=custom,
     )
     # 1 token of "hi" prompt → 1 input token, "one two three" → 3 output tokens
-    await tracker.complete(LLMRequest(prompt="hi"))
+    await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     # Cost = (1/1M * 1M) + (3/1M * 2M) = 1 + 6 = 7
     assert tracker.stats.total_cost_usd == 7.0
 
@@ -192,7 +192,7 @@ async def test_cost_tracking_only_counts_successful_final_outcome():
     retry = RetryingProvider(flaky, max_attempts=3, min_wait=0.01, max_wait=0.02)
     # Builder puts cost tracking OUTERMOST — same shape here.
     tracker = CostTrackingProvider(retry)
-    await tracker.complete(LLMRequest(prompt="hi"))
+    await tracker.complete(LLMRequest(messages=[Message(role="user", content="hi")]))
     assert flaky.attempts == 3                  # 2 fails + 1 success at the base
     assert tracker.stats.total_requests == 1    # but ONLY 1 success counted
     assert tracker.stats.total_input_tokens == 10

@@ -1,6 +1,12 @@
 import os
 from typing import AsyncIterator
-from aether.llm.contracts import LLMProvider, LLMRequest, LLMResponse, LLMStreamChunk
+from aether.llm.contracts import (
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    LLMStreamChunk,
+    Message,
+)
 from aether.extensions.llm.builder import (
     ProviderConfig,
     RetryConfig,
@@ -79,48 +85,55 @@ class Aether:
                 return UsageStats()
             provider = inner
 
+    @staticmethod
+    def _to_messages(prompt: str | list[Message]) -> list[Message]:
+        """Accept either a string (single user turn) or a full message list."""
+        if isinstance(prompt, str):
+            return [Message(role="user", content=prompt)]
+        return prompt
+
     async def complete(
         self,
-        prompt: str,
+        prompt: str | list[Message],
         *,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> LLMResponse:
         """Full response — text, model, token counts.
 
-        Use this when you need anything beyond the answer string (token
-        usage for cost tracking, model name actually used, etc.).
+        `prompt` accepts either a string (treated as a single user turn) or
+        a list of `Message` objects for multi-turn conversations.
         """
         return await self._provider.complete(LLMRequest(
-            prompt=prompt,
+            messages=self._to_messages(prompt),
             model=model,
             temperature=temperature,
         ))
 
-    async def ask(self, question: str) -> str:
+    async def ask(self, question: str | list[Message]) -> str:
         """Text-only convenience over `complete()`. Returns just the answer."""
         response = await self.complete(question)
         return response.text
 
     async def stream(
         self,
-        prompt: str,
+        prompt: str | list[Message],
         *,
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncIterator[LLMStreamChunk]:
-        """Stream of rich chunks — delta text + metadata.
-
-        Use this when you need anything beyond the streamed text (token
-        counts on the final chunk, finish reason, etc.).
-        """
-        request = LLMRequest(prompt=prompt, model=model, temperature=temperature)
+        """Stream of rich chunks — delta text + metadata."""
+        request = LLMRequest(
+            messages=self._to_messages(prompt),
+            model=model,
+            temperature=temperature,
+        )
         async for chunk in self._provider.stream(request):
             yield chunk
 
     async def stream_text(
         self,
-        prompt: str,
+        prompt: str | list[Message],
         *,
         model: str | None = None,
         temperature: float = 0.7,

@@ -1,7 +1,7 @@
 import pytest
 import time
 from typing import Optional
-from aether.llm.contracts import LLMRequest, LLMResponse, LLMProvider
+from aether.llm.contracts import LLMRequest, LLMResponse, LLMProvider, Message
 from aether.extensions.llm.retrying import RetryingProvider
 from aether.extensions.llm.circuit_breaker import CircuitBreakerProvider, CircuitState, CircuitBreakerOpenException
 
@@ -29,7 +29,7 @@ async def test_retrying_provider_recovers_from_failures():
     # Using small wait times for fast tests
     provider = RetryingProvider(inner, max_attempts=3, min_wait=0.01, max_wait=0.1)
     
-    request = LLMRequest(prompt="test")
+    request = LLMRequest(messages=[Message(role="user", content="test")])
     response = await provider.complete(request)
     
     assert response.text == "Success"
@@ -40,7 +40,7 @@ async def test_retrying_provider_bubbles_up_after_max_retries():
     inner = FailingProvider(fail_count=4)
     provider = RetryingProvider(inner, max_attempts=3, min_wait=0.01, max_wait=0.1)
     
-    request = LLMRequest(prompt="test")
+    request = LLMRequest(messages=[Message(role="user", content="test")])
     with pytest.raises(ValueError, match="Simulated transient failure"):
         await provider.complete(request)
     
@@ -51,7 +51,7 @@ async def test_circuit_breaker_opens_after_threshold():
     inner = FailingProvider(fail_count=10) # Fails consistently
     provider = CircuitBreakerProvider(inner, failure_threshold=2, recovery_timeout=0.1)
     
-    request = LLMRequest(prompt="test")
+    request = LLMRequest(messages=[Message(role="user", content="test")])
     
     # First failure
     with pytest.raises(ValueError):
@@ -82,7 +82,7 @@ async def test_circuit_breaker_half_open_recovery():
             
     inner = RecoveringProvider()
     provider = CircuitBreakerProvider(inner, failure_threshold=1, recovery_timeout=0.1)
-    request = LLMRequest(prompt="test")
+    request = LLMRequest(messages=[Message(role="user", content="test")])
     
     # Trip the breaker
     with pytest.raises(ValueError):

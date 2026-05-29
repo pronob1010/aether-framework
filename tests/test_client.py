@@ -40,7 +40,7 @@ async def test_aether_ask_uses_complete_internally():
     client = Aether(fake)
     answer = await client.ask("ping")
     assert answer == "hello"
-    assert fake.calls[0].prompt == "ping"
+    assert fake.calls[0].messages[0].content == "ping"
 
 
 def test_aether_from_config_builds_provider():

@@ -1,7 +1,7 @@
 import pytest
 from typing import AsyncIterator
 from aether import Aether
-from aether.llm.contracts import LLMRequest, LLMStreamChunk
+from aether.llm.contracts import LLMRequest, LLMStreamChunk, Message
 from aether.extensions.llm.fake import FakeProvider
 from aether.extensions.llm.retrying import RetryingProvider
 from aether.extensions.llm.circuit_breaker import (
@@ -16,7 +16,7 @@ from aether.extensions.llm.circuit_breaker import (
 @pytest.mark.asyncio
 async def test_fake_provider_stream_yields_word_deltas():
     fake = FakeProvider(canned_response="hello world how are you")
-    chunks = [c async for c in fake.stream(LLMRequest(prompt="hi"))]
+    chunks = [c async for c in fake.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     # 5 words → 5 chunks
     assert len(chunks) == 5
     # First chunk has no leading space, rest do
@@ -27,7 +27,7 @@ async def test_fake_provider_stream_yields_word_deltas():
 @pytest.mark.asyncio
 async def test_fake_provider_stream_final_chunk_carries_metadata():
     fake = FakeProvider(canned_response="one two")
-    chunks = [c async for c in fake.stream(LLMRequest(prompt="hi"))]
+    chunks = [c async for c in fake.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     # Final chunk has model, finish_reason, token counts
     assert chunks[-1].model == "fake-model"
     assert chunks[-1].finish_reason == "stop"
@@ -91,7 +91,7 @@ async def test_retry_recovers_when_handshake_fails():
     """Failures BEFORE the first chunk trigger retry, eventually succeeding."""
     flaky = FlakyStreamProvider(fail_times=2)
     retrying = RetryingProvider(flaky, max_attempts=3, min_wait=0.01, max_wait=0.02)
-    chunks = [c async for c in retrying.stream(LLMRequest(prompt="hi"))]
+    chunks = [c async for c in retrying.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     assert flaky.attempts == 3       # 2 fails + 1 success
     assert chunks[0].text == "one"
 
@@ -101,7 +101,7 @@ async def test_retry_gives_up_after_max_attempts():
     flaky = FlakyStreamProvider(fail_times=5)
     retrying = RetryingProvider(flaky, max_attempts=3, min_wait=0.01, max_wait=0.02)
     with pytest.raises(ConnectionError):
-        _ = [c async for c in retrying.stream(LLMRequest(prompt="hi"))]
+        _ = [c async for c in retrying.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     assert flaky.attempts == 3       # stopped at max
 
 
@@ -125,7 +125,7 @@ async def test_retry_does_not_apply_after_first_chunk():
     retrying = RetryingProvider(midfail, max_attempts=3, min_wait=0.01, max_wait=0.02)
     yielded = []
     with pytest.raises(ConnectionError, match="died mid-stream"):
-        async for chunk in retrying.stream(LLMRequest(prompt="hi")):
+        async for chunk in retrying.stream(LLMRequest(messages=[Message(role="user", content="hi")])):
             yielded.append(chunk)
     assert midfail.attempts == 1     # NOT retried
     assert len(yielded) == 1         # caller saw the first chunk before the failure
@@ -150,7 +150,7 @@ async def test_circuit_breaker_opens_after_failed_streams():
     )
     for _ in range(3):
         with pytest.raises(RuntimeError):
-            _ = [c async for c in breaker.stream(LLMRequest(prompt="hi"))]
+            _ = [c async for c in breaker.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     assert breaker.state == CircuitState.OPEN
 
 
@@ -163,12 +163,12 @@ async def test_circuit_breaker_fails_fast_when_open():
     )
     # Trip the breaker
     with pytest.raises(RuntimeError):
-        _ = [c async for c in breaker.stream(LLMRequest(prompt="hi"))]
+        _ = [c async for c in breaker.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
 
     # Next stream should fail fast — no chunks yielded
     yielded = []
     with pytest.raises(CircuitBreakerOpenException):
-        async for chunk in breaker.stream(LLMRequest(prompt="hi")):
+        async for chunk in breaker.stream(LLMRequest(messages=[Message(role="user", content="hi")])):
             yielded.append(chunk)
     assert yielded == []
 
@@ -177,6 +177,6 @@ async def test_circuit_breaker_fails_fast_when_open():
 async def test_circuit_breaker_counts_successful_stream():
     fake = FakeProvider(canned_response="ok")
     breaker = CircuitBreakerProvider(fake, failure_threshold=3, recovery_timeout=60)
-    _ = [c async for c in breaker.stream(LLMRequest(prompt="hi"))]
+    _ = [c async for c in breaker.stream(LLMRequest(messages=[Message(role="user", content="hi")]))]
     assert breaker.state == CircuitState.CLOSED
     assert breaker.failure_count == 0

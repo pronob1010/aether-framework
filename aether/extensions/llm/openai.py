@@ -1,6 +1,26 @@
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 from openai import AsyncOpenAI
-from aether.llm.contracts import LLMRequest, LLMResponse, LLMStreamChunk
+from aether.llm.contracts import (
+    LLMRequest,
+    LLMResponse,
+    LLMStreamChunk,
+    Message,
+)
+
+
+def _to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    """Translate Aether's Message list to OpenAI's chat-completions format."""
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        d: dict[str, Any] = {"role": msg.role}
+        if msg.content is not None:
+            d["content"] = msg.content
+        if msg.role == "tool" and msg.tool_call_id:
+            d["tool_call_id"] = msg.tool_call_id
+        # tool_calls (assistant role) wiring happens in Phase C.
+        out.append(d)
+    return out
+
 
 class OpenAIProvider:
     def __init__(self, api_key: str, default_model: str = "gpt-3.5-turbo"):
@@ -8,22 +28,22 @@ class OpenAIProvider:
         self.default_model = default_model
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        model = await self.client.chat.completions.create(
+        completion = await self.client.chat.completions.create(
             model=request.model or self.default_model,
-            messages=[{"role": "user", "content": request.prompt}],
+            messages=_to_openai_messages(request.messages),
             temperature=request.temperature,
         )
         return LLMResponse(
-            text=model.choices[0].message.content or "",
-            model=model.model,
-            input_tokens=model.usage.prompt_tokens,
-            output_tokens=model.usage.completion_tokens,
+            text=completion.choices[0].message.content or "",
+            model=completion.model,
+            input_tokens=completion.usage.prompt_tokens,
+            output_tokens=completion.usage.completion_tokens,
         )
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamChunk]:
         stream = await self.client.chat.completions.create(
             model=request.model or self.default_model,
-            messages=[{"role": "user", "content": request.prompt}],
+            messages=_to_openai_messages(request.messages),
             temperature=request.temperature,
             stream=True,
             stream_options={"include_usage": True},

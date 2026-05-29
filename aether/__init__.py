@@ -8,7 +8,7 @@ observability.
 """
 
 from aether.client import Aether
-from aether.llm import LLMProvider, LLMRequest, LLMResponse, ask
+from aether.llm import LLMProvider, LLMRequest, LLMResponse, Message, ToolCall, ask
 from aether.extensions.llm.registry import register_provider
 from aether.extensions.llm.cost_tracking import UsageStats, TokenUsage, ModelPricing
 from aether.registry import register, register_lazy
@@ -16,6 +16,9 @@ from aether.registry import register, register_lazy
 __all__ = [
     # Entry point
     "Aether",
+    # Conversation primitives
+    "Message",
+    "ToolCall",
     # Cost tracking primitives (exposed via Aether.usage)
     "UsageStats",
     "TokenUsage",
