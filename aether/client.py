@@ -21,54 +21,89 @@ from aether.tools.registry import dispatch_tool
 from aether.config import get_default_temperature, get_max_tool_iterations
 
 
+def _config_from_env(
+    *,
+    with_retry: bool,
+    with_circuit_breaker: bool,
+    with_cost_tracking: bool,
+) -> ProviderConfig:
+    """Resolve LLM_PROVIDER + per-provider env vars into a ProviderConfig.
+
+    Used by `Aether()` when no explicit provider or config is given.
+    """
+    name = os.getenv("LLM_PROVIDER", "openai")
+    specs = REGISTRY[LLM_PROVIDER_KIND]
+    if name not in specs:
+        raise ValueError(
+            f"Unknown LLM_PROVIDER={name!r}. "
+            f"Known: {list_kind(LLM_PROVIDER_KIND)}."
+        )
+    meta = specs[name].metadata
+
+    api_key = None
+    if env := meta.get("api_key_env"):
+        api_key = os.getenv(env)
+        if not api_key:
+            raise RuntimeError(
+                f"Set {env} to use the {name!r} provider."
+            )
+
+    default_model = None
+    if env := meta.get("model_env"):
+        default_model = os.getenv(env)
+
+    return ProviderConfig(
+        name=name,
+        api_key=api_key,
+        default_model=default_model,
+        retry=RetryConfig() if with_retry else None,
+        circuit_breaker=CircuitBreakerConfig() if with_circuit_breaker else None,
+        cost_tracking=CostTrackingConfig() if with_cost_tracking else None,
+    )
+
+
 class Aether:
     """Top-level entry point. Hides provider construction, resilience wiring,
-    and request/response plumbing."""
+    and request/response plumbing.
 
-    def __init__(self, provider: LLMProvider):
-        self._provider = provider
+    Three construction modes through one constructor:
 
-    @classmethod
-    def from_config(cls, config: ProviderConfig) -> "Aether":
-        return cls(build_provider(config))
+        Aether()
+            Auto-detect from env. Reads LLM_PROVIDER and the matching
+            *_API_KEY / *_MODEL vars. Wraps the provider in retry +
+            circuit-breaker + cost-tracking by default.
 
-    @classmethod
-    def from_env(
-        cls,
+        Aether(config=ProviderConfig(...))
+            Build the same decorator stack from an explicit config object.
+
+        Aether(provider=some_provider)
+            Use a pre-built provider as-is. You're in control of any
+            decorator wrapping; the `with_*` flags are ignored.
+    """
+
+    def __init__(
+        self,
+        provider: LLMProvider | None = None,
         *,
+        config: ProviderConfig | None = None,
         with_retry: bool = True,
         with_circuit_breaker: bool = True,
         with_cost_tracking: bool = True,
-    ) -> "Aether":
-        name = os.getenv("LLM_PROVIDER", "openai")
-        specs = REGISTRY[LLM_PROVIDER_KIND]
-        if name not in specs:
-            raise ValueError(
-                f"Unknown LLM_PROVIDER={name!r}. "
-                f"Known: {list_kind(LLM_PROVIDER_KIND)}."
+    ):
+        if provider is not None and config is not None:
+            raise ValueError("Pass either `provider` or `config`, not both.")
+
+        if provider is not None:
+            self._provider = provider
+            return
+
+        if config is None:
+            config = _config_from_env(
+                with_retry=with_retry,
+                with_circuit_breaker=with_circuit_breaker,
+                with_cost_tracking=with_cost_tracking,
             )
-        meta = specs[name].metadata
-
-        api_key = None
-        if env := meta.get("api_key_env"):
-            api_key = os.getenv(env)
-            if not api_key:
-                raise RuntimeError(
-                    f"Set {env} to use the {name!r} provider."
-                )
-
-        default_model = None
-        if env := meta.get("model_env"):
-            default_model = os.getenv(env)
-
-        return cls.from_config(ProviderConfig(
-            name=name,
-            api_key=api_key,
-            default_model=default_model,
-            retry=RetryConfig() if with_retry else None,
-            circuit_breaker=CircuitBreakerConfig() if with_circuit_breaker else None,
-            cost_tracking=CostTrackingConfig() if with_cost_tracking else None,
-        ))
+        self._provider = build_provider(config)
 
     @property
     def usage(self) -> UsageStats:

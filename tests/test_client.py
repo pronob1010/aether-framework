@@ -43,27 +43,32 @@ async def test_aether_ask_uses_complete_internally():
     assert fake.calls[0].messages[0].content == "ping"
 
 
-def test_aether_from_config_builds_provider():
-    client = Aether.from_config(ProviderConfig(name="fake"))
+def test_aether_config_kwarg_builds_provider():
+    client = Aether(config=ProviderConfig(name="fake"))
     assert isinstance(client._provider, FakeProvider)
 
 
-def test_aether_from_env_unknown_provider_raises(monkeypatch):
+def test_aether_rejects_both_provider_and_config():
+    with pytest.raises(ValueError, match="not both"):
+        Aether(FakeProvider(), config=ProviderConfig(name="fake"))
+
+
+def test_aether_unknown_provider_env_raises(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "bogus")
     with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
-        Aether.from_env()
+        Aether()
 
 
-def test_aether_from_env_missing_api_key_raises(monkeypatch):
+def test_aether_missing_api_key_raises(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-        Aether.from_env()
+        Aether()
 
 
-def test_aether_from_env_fake_needs_no_api_key(monkeypatch):
+def test_aether_fake_provider_via_env_needs_no_api_key(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "fake")
-    client = Aether.from_env(
+    client = Aether(
         with_retry=False,
         with_circuit_breaker=False,
         with_cost_tracking=False,

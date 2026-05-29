@@ -93,7 +93,7 @@ async def test_registered_provider_works_via_facade(cleanup_registry, monkeypatc
 
     monkeypatch.setenv("LLM_PROVIDER", "my_llm")
     monkeypatch.setenv("MY_LLM_KEY", "secret-key")
-    client = Aether.from_env(with_retry=False, with_circuit_breaker=False)
+    client = Aether(with_retry=False, with_circuit_breaker=False)
     answer = await client.ask("ping")
     assert answer == "hello from secret-key"
 

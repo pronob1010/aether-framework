@@ -18,7 +18,7 @@ def register_provider(name: str, **metadata):
     """Class decorator for third-party LLM providers.
 
     `**metadata` is forwarded to the registry as-is. Conventional keys
-    consumed by `Aether.from_env`:
+    consumed by `Aether()` when auto-detecting from env:
         api_key_env: str | None — env var holding the API key
         model_env:   str | None — env var overriding default_model
 

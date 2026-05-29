@@ -139,7 +139,7 @@ def test_total_cost_skips_models_without_pricing():
 
 @pytest.mark.asyncio
 async def test_aether_usage_exposes_stats_when_tracking_on():
-    client = Aether.from_config(ProviderConfig(
+    client = Aether(config=ProviderConfig(
         name="fake",
         cost_tracking=CostTrackingConfig(),
     ))
@@ -150,7 +150,7 @@ async def test_aether_usage_exposes_stats_when_tracking_on():
 @pytest.mark.asyncio
 async def test_aether_usage_returns_empty_when_tracking_off():
     """No surprises — property always callable, just shows zeros."""
-    client = Aether.from_config(ProviderConfig(name="fake"))
+    client = Aether(config=ProviderConfig(name="fake"))
     await client.ask("hi")
     assert client.usage.total_requests == 0
     assert isinstance(client.usage, UsageStats)
@@ -159,7 +159,7 @@ async def test_aether_usage_returns_empty_when_tracking_off():
 @pytest.mark.asyncio
 async def test_aether_usage_walks_through_retry_wrapper():
     """Cost tracking sits OUTSIDE retry — usage should be reachable through it."""
-    client = Aether.from_config(ProviderConfig(
+    client = Aether(config=ProviderConfig(
         name="fake",
         retry=RetryConfig(max_attempts=2, min_wait=0.01, max_wait=0.02),
         cost_tracking=CostTrackingConfig(),
