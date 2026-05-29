@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from aether.llm.contracts import LLMProvider
-from aether.llm.providers.factory import make_provider
+from aether.providers.llm.factory import make_provider
 
 class RetryConfig(BaseModel):
     max_attempts: int = 3
@@ -27,10 +27,10 @@ def build_provider(config: ProviderConfig) -> LLMProvider:
     # Order is load-bearing: retry sits INSIDE the breaker so one
     # retry-exhausted call counts as ONE breaker failure, not N.
     if config.retry:
-        from aether.llm.providers.retrying_provider import RetryingProvider
+        from aether.providers.llm.retrying import RetryingProvider
         provider = RetryingProvider(provider, **config.retry.model_dump())
     if config.circuit_breaker:
-        from aether.llm.providers.circuit_breaker_provider import CircuitBreakerProvider
+        from aether.providers.llm.circuit_breaker import CircuitBreakerProvider
         provider = CircuitBreakerProvider(provider, **config.circuit_breaker.model_dump())
 
     return provider

@@ -1,22 +1,14 @@
 import os
 from aether.llm.contracts import LLMProvider, LLMRequest
-from aether.llm.providers.builder import (
+from aether.providers.llm.builder import (
     ProviderConfig,
     RetryConfig,
     CircuitBreakerConfig,
     build_provider,
 )
+from aether.registry import REGISTRY, list_kind
+from aether.providers.llm.registry import LLM_PROVIDER_KIND
 
-_API_KEY_ENV = {
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "fake":   None,
-}
-_MODEL_ENV = {
-    "openai": "OPENAI_MODEL",
-    "gemini": "GEMINI_MODEL",
-    "fake":   None,
-}
 
 class Aether:
     """Top-level entry point. Hides provider construction, resilience wiring,
@@ -37,20 +29,24 @@ class Aether:
         with_circuit_breaker: bool = True,
     ) -> "Aether":
         name = os.getenv("LLM_PROVIDER", "openai")
-        if name not in _API_KEY_ENV:
+        specs = REGISTRY[LLM_PROVIDER_KIND]
+        if name not in specs:
             raise ValueError(
                 f"Unknown LLM_PROVIDER={name!r}. "
-                f"Known: {list(_API_KEY_ENV)}."
+                f"Known: {list_kind(LLM_PROVIDER_KIND)}."
             )
+        meta = specs[name].metadata
 
         api_key = None
-        if env := _API_KEY_ENV[name]:
+        if env := meta.get("api_key_env"):
             api_key = os.getenv(env)
             if not api_key:
-                raise RuntimeError(f"Set {env} to use the {name!r} provider.")
+                raise RuntimeError(
+                    f"Set {env} to use the {name!r} provider."
+                )
 
         default_model = None
-        if env := _MODEL_ENV[name]:
+        if env := meta.get("model_env"):
             default_model = os.getenv(env)
 
         return cls.from_config(ProviderConfig(

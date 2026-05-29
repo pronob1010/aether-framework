@@ -1,13 +1,13 @@
 import pytest
-from aether.llm.providers.builder import (
+from aether.providers.llm.builder import (
     ProviderConfig,
     RetryConfig,
     CircuitBreakerConfig,
     build_provider,
 )
-from aether.llm.providers.fake_provider import FakeProvider
-from aether.llm.providers.retrying_provider import RetryingProvider
-from aether.llm.providers.circuit_breaker_provider import CircuitBreakerProvider
+from aether.providers.llm.fake import FakeProvider
+from aether.providers.llm.retrying import RetryingProvider
+from aether.providers.llm.circuit_breaker import CircuitBreakerProvider
 
 
 def test_build_provider_bare_returns_concrete_provider():

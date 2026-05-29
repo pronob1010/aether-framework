@@ -9,9 +9,18 @@ observability.
 
 from aether.client import Aether
 from aether.llm import LLMProvider, LLMRequest, LLMResponse, ask
+from aether.providers.llm.registry import register_provider
+from aether.registry import register, register_lazy
 
 __all__ = [
+    # Entry point
     "Aether",
+    # Generic extension API (any subsystem: LLM, vector store, DB, ...)
+    "register",
+    "register_lazy",
+    # LLM-specific convenience
+    "register_provider",
+    # LLM contracts
     "LLMProvider",
     "LLMRequest",
     "LLMResponse",

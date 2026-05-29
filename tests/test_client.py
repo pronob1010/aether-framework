@@ -1,7 +1,7 @@
 import pytest
 from aether import Aether
-from aether.llm.providers.builder import ProviderConfig
-from aether.llm.providers.fake_provider import FakeProvider
+from aether.providers.llm.builder import ProviderConfig
+from aether.providers.llm.fake import FakeProvider
 
 
 @pytest.mark.asyncio

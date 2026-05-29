@@ -2,8 +2,8 @@ import pytest
 import time
 from typing import Optional
 from aether.llm.contracts import LLMRequest, LLMResponse, LLMProvider
-from aether.llm.providers.retrying_provider import RetryingProvider
-from aether.llm.providers.circuit_breaker_provider import CircuitBreakerProvider, CircuitState, CircuitBreakerOpenException
+from aether.providers.llm.retrying import RetryingProvider
+from aether.providers.llm.circuit_breaker import CircuitBreakerProvider, CircuitState, CircuitBreakerOpenException
 
 class FailingProvider(LLMProvider):
     """A mock provider that fails a specific number of times before succeeding."""

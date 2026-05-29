@@ -1,6 +1,6 @@
 import pytest
 from aether.llm.ask import ask
-from aether.llm.providers.fake_provider import FakeProvider
+from aether.providers.llm.fake import FakeProvider
 
 @pytest.mark.asyncio
 async def test_ask_returns_provider_text():
