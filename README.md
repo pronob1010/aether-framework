@@ -70,6 +70,21 @@ Both Retry and CircuitBreaker decorators handle streaming. Retry only
 applies to the handshake (before the first chunk yields); errors
 mid-stream propagate so the caller never sees duplicate output.
 
+Tool calling works during streaming too:
+
+```python
+async for delta in client.stream_text(
+    "What's 17+25?", tools=["add"],
+):
+    print(delta, end="", flush=True)
+# "Let me add those." → [tool runs] → "The answer is 42."
+```
+
+Internally the framework runs multiple provider sessions — text →
+tool dispatch → text — but the user sees ONE logical stream.
+`stream.start` and `stream.complete` fire once across the whole
+stream; tool dispatches fire the normal `tool.*` events.
+
 ### Tool calling
 
 ```python
@@ -324,13 +339,14 @@ fake = FakeProvider(responses=[
 ## Status & roadmap
 
 Shipped: provider abstraction, resilience (retry + circuit breaker),
-cost tracking, streaming, multi-turn messages, tool calling, reference
-tools, env-driven config, observability hooks (Observer pattern).
+cost tracking, streaming (including with tool calls), multi-turn
+messages, tool calling, reference tools, env-driven config,
+observability hooks (Observer pattern).
 
 On deck (not yet built):
 - Caching decorator
-- Streaming + tool calls together (the punted piece)
 - Anthropic provider
+- Memory/session subsystem
 - `pyproject.toml` and PyPI release
 
 ## License

@@ -295,41 +295,108 @@ class Aether:
         *,
         model: str | None = None,
         temperature: float | None = None,
+        tools: list[str] | None = None,
+        max_tool_iterations: int | None = None,
     ) -> AsyncIterator[LLMStreamChunk]:
         """Stream of rich chunks — delta text + metadata.
 
-        Fires `stream.start` once, `stream.chunk` per chunk yielded,
-        and `stream.complete` when the stream ends normally. If the
-        underlying provider errors mid-stream, `stream.error` fires
-        and the exception propagates.
+        Fires `stream.start` ONCE at the beginning, `stream.chunk` per
+        text chunk yielded to the user, and `stream.complete` when the
+        whole user-facing stream ends. If `tools` is provided, the LLM
+        may call tools mid-stream; those happen invisibly to the user
+        (no chunks emitted for tool-call control flow). Tool dispatch
+        fires the normal `tool.*` events.
+
+        Errors propagate; `stream.error` fires with `chunk_count` set
+        to however many user-facing text chunks made it out first.
         """
         if temperature is None:
             temperature = get_default_temperature()
-        request = LLMRequest(
-            messages=self._to_messages(prompt),
+        if max_tool_iterations is None:
+            max_tool_iterations = get_max_tool_iterations()
+        messages = self._to_messages(prompt)
+
+        # `initial_request` is what the user-facing stream events reference.
+        # Internal tool-loop iterations build their own LLMRequest objects.
+        initial_request = LLMRequest(
+            messages=messages,
             model=model,
             temperature=temperature,
+            tools=tools,
         )
-        await self.events.emit(STREAM_START, StreamStartEvent(request=request))
+
+        await self.events.emit(STREAM_START, StreamStartEvent(request=initial_request))
         start = time.perf_counter()
         chunk_count = 0
+
         try:
-            async for chunk in self._provider.stream(request):
-                chunk_count += 1
-                await self.events.emit(STREAM_CHUNK, StreamChunkEvent(
-                    request=request, chunk=chunk,
-                ))
-                yield chunk
+            if not tools:
+                # Fast path — single provider session, no tool loop.
+                async for chunk in self._provider.stream(initial_request):
+                    chunk_count += 1
+                    await self.events.emit(STREAM_CHUNK, StreamChunkEvent(
+                        request=initial_request, chunk=chunk,
+                    ))
+                    yield chunk
+            else:
+                # Tool-aware loop: each iteration is one provider.stream()
+                # session. Text chunks pass through to the user; chunks
+                # carrying tool_calls are consumed internally (dispatched,
+                # results appended to messages, next iteration starts).
+                for _ in range(max_tool_iterations + 1):
+                    request = LLMRequest(
+                        messages=messages,
+                        model=model,
+                        temperature=temperature,
+                        tools=tools,
+                    )
+
+                    session_tool_calls: list = []
+                    session_text = ""
+
+                    async for chunk in self._provider.stream(request):
+                        if chunk.tool_calls:
+                            # Control-flow chunk — accumulate, don't show user.
+                            session_tool_calls.extend(chunk.tool_calls)
+                            continue
+                        chunk_count += 1
+                        session_text += chunk.text
+                        await self.events.emit(STREAM_CHUNK, StreamChunkEvent(
+                            request=initial_request, chunk=chunk,
+                        ))
+                        yield chunk
+
+                    if not session_tool_calls:
+                        # LLM produced its final answer; user-facing stream is done.
+                        break
+
+                    # Append the assistant turn (text it streamed + tool_calls
+                    # it requested), then dispatch each tool and append results.
+                    messages.append(Message(
+                        role="assistant",
+                        content=session_text or None,
+                        tool_calls=session_tool_calls,
+                    ))
+                    for tc in session_tool_calls:
+                        content = await self._dispatch_with_events(tc)
+                        messages.append(Message(
+                            role="tool",
+                            content=content,
+                            tool_call_id=tc.id,
+                        ))
         except BaseException as e:
             duration = time.perf_counter() - start
             await self.events.emit(STREAM_ERROR, StreamErrorEvent(
-                request=request, error=e,
+                request=initial_request, error=e,
                 duration_seconds=duration, chunk_count=chunk_count,
             ))
             raise
+
         duration = time.perf_counter() - start
         await self.events.emit(STREAM_COMPLETE, StreamCompleteEvent(
-            request=request, duration_seconds=duration, chunk_count=chunk_count,
+            request=initial_request,
+            duration_seconds=duration,
+            chunk_count=chunk_count,
         ))
 
     async def stream_text(
@@ -338,8 +405,20 @@ class Aether:
         *,
         model: str | None = None,
         temperature: float | None = None,
+        tools: list[str] | None = None,
+        max_tool_iterations: int | None = None,
     ) -> AsyncIterator[str]:
-        """Text-only convenience over `stream()`. Yields just text deltas."""
-        async for chunk in self.stream(prompt, model=model, temperature=temperature):
+        """Text-only convenience over `stream()`. Yields just text deltas.
+
+        Supports tool calling: pass `tools=["name", ...]` and Aether runs
+        the tool loop invisibly, yielding only the LLM's final-answer text.
+        """
+        async for chunk in self.stream(
+            prompt,
+            model=model,
+            temperature=temperature,
+            tools=tools,
+            max_tool_iterations=max_tool_iterations,
+        ):
             if chunk.text:
                 yield chunk.text

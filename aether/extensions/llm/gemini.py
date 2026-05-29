@@ -120,12 +120,18 @@ class GeminiProvider:
         )
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamChunk]:
-        # NOTE: streaming + tool calling not supported in Phase C (same as OpenAI).
+        """Stream with tool-call support.
+
+        Gemini emits function calls atomically (not chunked across deltas),
+        so a tool call appears on a single chunk's candidate as a
+        `function_call` Part — no per-chunk accumulation needed.
+        """
         model = request.model or self.default_model
         system, conversation = _split_system_and_conversation(request.messages)
         config = types.GenerateContentConfig(
             temperature=request.temperature,
             system_instruction=system,
+            tools=_tools_config(request.tools),
         )
         stream = await self.client.aio.models.generate_content_stream(
             model=model,
@@ -137,6 +143,20 @@ class GeminiProvider:
             finish = None
             if chunk.candidates and chunk.candidates[0].finish_reason:
                 finish = str(chunk.candidates[0].finish_reason)
+
+            tool_calls = _parse_function_calls(chunk)
+            if tool_calls:
+                # Emit a control-flow chunk so the facade can dispatch.
+                yield LLMStreamChunk(
+                    text="",
+                    model=chunk.model_version or model,
+                    finish_reason=finish or "tool_calls",
+                    tool_calls=tool_calls,
+                    input_tokens=usage.prompt_token_count if usage else None,
+                    output_tokens=usage.candidates_token_count if usage else None,
+                )
+                continue
+
             yield LLMStreamChunk(
                 text=chunk.text or "",
                 model=chunk.model_version or model,
